@@ -1,0 +1,197 @@
+#include <Wire.h>
+#include <LiquidCrystal.h>
+
+// ADXL345 I2C Address
+#define ADXL345_ADDRESS 0x53
+
+// ADXL345 Registers
+#define POWER_CTL 0x2D
+#define DATAX0 0x32
+
+// Buzzer Pin
+#define BUZZER_PIN 6
+
+// Initialize the LCD (RS, E, D4, D5, D6, D7)
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
+// Variables to store calibrated values
+int16_t initialX = 0, initialY = 0, initialZ = 0;
+
+void setup() {
+  // Start Serial communication
+  Serial.begin(9600);
+
+  // Display welcome message on Serial Monitor
+  Serial.println("WELCOME TO");
+  Serial.println("INVENTIFY HUB");
+
+  // Initialize LCD
+  lcd.begin(16, 2);    // Initialize 16x2 LCD
+  lcd.clear();
+
+  // Initialize buzzer pin as output
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW); // Start with the buzzer off
+
+  // Sound buzzer at the system startup
+  soundBuzzer();
+
+  // Animate welcome message on LCD
+  lcd.setCursor(0, 0);
+  String welcomeLine1 = "WELCOME TO";
+  String welcomeLine2 = "INVENTIFY HUB";
+  
+  // Center "Welcome to" on line 1
+  int space1 = (16 - welcomeLine1.length()) / 2;
+  for (int i = 0; i < space1; i++) {
+    lcd.print(" ");  // Print leading spaces
+  }
+  animateMessage(welcomeLine1);
+  
+  lcd.setCursor(0, 1); // Move to second line
+
+  // Center "Inventify Hub" on line 2
+  int space2 = (16 - welcomeLine2.length()) / 2;
+  for (int i = 0; i < space2; i++) {
+    lcd.print(" ");  // Print leading spaces
+  }
+  animateMessage(welcomeLine2);
+
+  // Wait for 4 seconds to display the welcome message
+  delay(4000);
+
+  // Clear the screen after displaying the welcome message
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Initializing...");
+
+  // Initialize I2C communication
+  Wire.begin();
+  Wire.beginTransmission(ADXL345_ADDRESS);
+  Wire.write(POWER_CTL); // Power Control Register
+  Wire.write(0x08);      // Put ADXL345 into measurement mode
+  Wire.endTransmission();
+
+  // Calibrate the ADXL345 sensor (set initial values to zero)
+  calibrateSensor();
+
+  // Display completion message
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Calibration done!");
+  delay(1000); // Show for 1 second
+  lcd.clear();
+}
+
+void loop() {
+  int16_t x, y, z;
+
+  // Read sensor data
+  readADXL345(x, y, z);
+
+  // Calculate calibrated values
+  int16_t calibratedX = x - initialX;
+  int16_t calibratedY = y - initialY;
+  int16_t calibratedZ = z - initialZ;
+
+  // Clear LCD and display X, Y, Z values
+  lcd.clear();
+  lcd.setCursor(1, 0);
+  lcd.print("X");
+  lcd.setCursor(0, 1); // Value of X in second column
+  lcd.print(calibratedX);
+  
+  lcd.setCursor(7, 0);
+  lcd.print("Y");
+  lcd.setCursor(6, 1); // Value of Y in second column
+  lcd.print(calibratedY);
+  
+  lcd.setCursor(14, 0);
+  lcd.print("Z");
+  lcd.setCursor(13, 1); // Value of Z in second column
+  lcd.print(calibratedZ);
+
+  // For Serial Plotter (comma-separated values without labels)
+  Serial.print("X:");    // Label for X
+  Serial.print(calibratedX);
+  Serial.print(",Y:");    // Label for Y
+  Serial.print(calibratedY);
+  Serial.print(",Z:");    // Label for Z
+  Serial.println(calibratedZ);
+
+  // Check if any value exceeds 100 (Earthquake detection)
+  if (abs(calibratedX) > 100 || abs(calibratedY) > 100 || abs(calibratedZ) > 100) {
+    // Activate buzzer with siren sound
+    soundSiren();
+
+    // Display Earthquake message on LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Earthquake!");
+
+    // Print message to Serial Monitor
+    Serial.println("Earthquake detected!");
+
+    delay(2000); // Keep the message and sound for 2 seconds
+    digitalWrite(BUZZER_PIN, LOW); // Turn off the buzzer after delay
+  }
+
+  delay(500); // Update every 500ms
+}
+
+// Function to read data from the ADXL345 sensor
+void readADXL345(int16_t &x, int16_t &y, int16_t &z) {
+  Wire.beginTransmission(ADXL345_ADDRESS);
+  Wire.write(DATAX0);  // Start reading from DATAX0 register
+  Wire.endTransmission();
+  Wire.requestFrom(ADXL345_ADDRESS, 6); // Request 6 bytes of data
+
+  if (Wire.available() == 6) {
+    x = (Wire.read() | (Wire.read() << 8)); // Combine two bytes for X-axis
+    y = (Wire.read() | (Wire.read() << 8)); // Combine two bytes for Y-axis
+    z = (Wire.read() | (Wire.read() << 8)); // Combine two bytes for Z-axis
+  }
+}
+
+// Function to calibrate the ADXL345 sensor (sets initial X, Y, Z to zero)
+void calibrateSensor() {
+  int16_t x, y, z;
+  readADXL345(x, y, z);
+
+  // Store initial values as reference (zero points)
+  initialX = x;
+  initialY = y;
+  initialZ = z;
+
+  // Optionally, print the initial values to the Serial Monitor for reference
+  Serial.println("Calibration Complete!");
+  Serial.print("Initial X: "); Serial.println(initialX);
+  Serial.print("Initial Y: "); Serial.println(initialY);
+  Serial.print("Initial Z: "); Serial.println(initialZ);
+}
+
+// Function to animate the welcome message
+void animateMessage(String message) {
+  for (int i = 0; i < message.length(); i++) {
+    lcd.print(message[i]);  // Print each character
+    delay(200);  // Delay between each character for animation effect
+  }
+}
+
+// Function to create a siren sound with the buzzer
+void soundSiren() {
+  for (int i = 0; i < 5; i++) { // Repeat sound 5 times
+    digitalWrite(BUZZER_PIN, HIGH); // Turn buzzer on
+    delay(200); // Buzzer on for 200ms
+    digitalWrite(BUZZER_PIN, LOW); // Turn buzzer off
+    delay(200); // Buzzer off for 200ms
+  }
+}
+
+// Function to sound buzzer when the system starts
+void soundBuzzer() {
+  digitalWrite(BUZZER_PIN, HIGH);  // Turn on buzzerz
+  delay(500);  // Sound for 500ms
+  digitalWrite(BUZZER_PIN, LOW);  // Turn off buzzer
+  delay(500);  // Pause for 500ms
+}
